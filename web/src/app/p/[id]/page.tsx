@@ -5,139 +5,147 @@ import { useState, useEffect } from "react";
 import { Users, ArrowLeft, ShieldCheck, Send } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { createClient } from "@/utils/supabase/client";
 
 export default function DetailPage() {
   const { id } = useParams();
   const [data, setData] = useState<any>(null);
   const [voted, setVoted] = useState<"positive" | "negative" | null>(null);
-  const [posPct, setPosPct] = useState(65);
-  
-  // Comments state
+  const [posPct, setPosPct] = useState(50);
   const [comments, setComments] = useState<any[]>([]);
   const [newComment, setNewComment] = useState("");
+  const [user, setUser] = useState<any>(null);
+  const [voting, setVoting] = useState(false);
+  const [submittingComment, setSubmittingComment] = useState(false);
+
+  const supabase = createClient();
 
   useEffect(() => {
-    // 1. Load Prediction Data
-    const storedContent = localStorage.getItem("mock_predictions");
-    if (storedContent) {
-      const arr = JSON.parse(storedContent);
-      const found = arr.find((p: any) => p.id === id);
-      if (found) {
-        setData(found);
-        setPosPct(found.posPct || 50);
-      } else {
-        fallbackData();
+    async function loadData() {
+      const { data: authData } = await supabase.auth.getUser();
+      const currentUser = authData.user;
+      setUser(currentUser);
+
+      // Load Prediction Info
+      const { data: pData } = await supabase
+        .from('predictions')
+        .select(`id, title, deadline, reward, status, profiles (username, avatar_url)`)
+        .eq('id', id)
+        .single();
+      
+      // Load Votes
+      const { data: vData } = await supabase
+        .from('votes')
+        .select('user_id, vote_type')
+        .eq('prediction_id', id);
+
+      if (pData) {
+         let positive = 0;
+         let negative = 0;
+         let myVote = null;
+
+         vData?.forEach(v => {
+           if (v.vote_type === 'positive') positive++;
+           if (v.vote_type === 'negative') negative++;
+           if (currentUser && v.user_id === currentUser.id) {
+             myVote = v.vote_type;
+           }
+         });
+         
+         setVoted(myVote);
+         const total = positive + negative;
+         setPosPct(total > 0 ? Math.round((positive / total) * 100) : 50);
+
+         const target = new Date(pData.deadline).getTime();
+         const daysLeft = Math.ceil((target - Date.now()) / (1000 * 60 * 60 * 24));
+
+         setData({
+           id: pData.id,
+           author: pData.profiles?.username || "佚名",
+           title: pData.title,
+           timeLeft: daysLeft > 0 ? `${daysLeft}天后` : '已截止',
+           votes: total
+         });
       }
-    } else {
-      fallbackData();
-    }
 
-    // 2. Load My Vote
-    const cachedVotes = localStorage.getItem("mock_my_votes");
-    if (cachedVotes) {
-      const votesObj = JSON.parse(cachedVotes);
-      if (votesObj[id as string]) {
-        setVoted(votesObj[id as string]);
+      // Load Comments
+      const { data: cData } = await supabase
+        .from('comments')
+        .select(`id, content, created_at, profiles (username)`)
+        .eq('prediction_id', id)
+        .order('created_at', { ascending: false });
+
+      if (cData) {
+        setComments(cData.map(c => ({
+          id: c.id,
+          author: c.profiles?.username || "游客",
+          text: c.content,
+          time: new Date(c.created_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        })));
       }
     }
+    loadData();
+  }, [id, supabase]);
 
-    // 3. Load Comments
-    const cachedComments = localStorage.getItem("mock_comments");
-    if (cachedComments) {
-      const commentsObj = JSON.parse(cachedComments);
-      if (commentsObj[id as string]) {
-        setComments(commentsObj[id as string]);
-      } else {
-        fallbackComments();
+  const handleVote = async (type: "positive" | "negative") => {
+    if (!user) {
+      if (confirm("你要先验证先知身份才能参与盖章哦！是否前往登录？")) {
+        window.location.href = '/login';
       }
-    } else {
-      fallbackComments();
+      return;
     }
-
-  }, [id]);
-
-  const fallbackData = () => {
-    setData({
-      id: id,
-      author: "Alex",
-      title: "挑战这个月减重5斤，赢家共同瓜分1000欢乐豆，立帖为证！",
-      timeLeft: "3天后",
-      votes: 128
-    });
-    setPosPct(65);
-  };
-
-  const fallbackComments = () => {
-    setComments([
-      { id: "101", author: "王刚", text: "有点悬啊兄弟，别勉强", time: "2小时前" },
-      { id: "102", author: "李雪", text: "稳的稳的，等分钱了哈哈", time: "5小时前" }
-    ]);
-  };
-
-  const handleVote = (type: "positive" | "negative") => {
-    let nextPct = posPct;
-    let voteDiff = 0;
-    let nextVote = voted;
+    if (voting) return;
+    setVoting(true);
 
     if (voted === type) {
       // Cancel vote
-      nextVote = null;
-      voteDiff = -1;
-      nextPct = type === "positive" ? Math.max(0, posPct - 2) : Math.min(100, posPct + 2);
-    } else if (voted && voted !== type) {
-      // Switch vote
-      nextVote = type;
-      voteDiff = 0; 
-      nextPct = type === "positive" ? Math.min(100, posPct + 4) : Math.max(0, posPct - 4);
+      await supabase.from('votes').delete().eq('prediction_id', id).eq('user_id', user.id);
+      setVoted(null);
+      setData({...data, votes: Math.max(0, data.votes - 1)});
     } else {
-      // New vote
-      nextVote = type;
-      voteDiff = 1;
-      nextPct = type === "positive" ? Math.min(100, posPct + 2) : Math.max(0, posPct - 2);
+      // Upsert vote
+      await supabase.from('votes').upsert({ 
+        prediction_id: id as string, 
+        user_id: user.id, 
+        vote_type: type 
+      }, { onConflict: 'prediction_id,user_id' });
+      
+      if (!voted) setData({...data, votes: data.votes + 1});
+      setVoted(type);
     }
-
-    setVoted(nextVote);
-    setPosPct(nextPct);
-
-    // Persist My Vote
-    const cachedVotes = localStorage.getItem("mock_my_votes") || "{}";
-    const votesObj = JSON.parse(cachedVotes);
-    if (nextVote) {
-      votesObj[id as string] = nextVote;
-    } else {
-      delete votesObj[id as string];
-    }
-    localStorage.setItem("mock_my_votes", JSON.stringify(votesObj));
-
-    // Persist Global Data
-    const newVotes = Math.max(0, (data.votes || 0) + voteDiff);
-    setData({...data, votes: newVotes});
-
-    const storedContent = localStorage.getItem("mock_predictions");
-    if (storedContent) {
-      const arr = JSON.parse(storedContent);
-      const index = arr.findIndex((p: any) => p.id === id);
-      if (index !== -1) {
-        arr[index].votes = newVotes;
-        arr[index].posPct = nextPct;
-        localStorage.setItem("mock_predictions", JSON.stringify(arr));
-      }
-    }
+    setVoting(false);
   };
 
-  const submitComment = (e: React.FormEvent) => {
+  const submitComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim()) return;
+    if (!user) {
+      if (confirm("发弹幕吃瓜也需要先报上名号哦！是否前往登录？")) {
+        window.location.href = '/login';
+      }
+      return;
+    }
 
-    const c = { id: Date.now().toString(), author: "我 (Me)", text: newComment, time: "刚刚" };
-    const updated = [c, ...comments];
-    setComments(updated);
-    setNewComment("");
+    setSubmittingComment(true);
+    const { data: insertData, error } = await supabase.from('comments').insert({
+      prediction_id: id as string,
+      user_id: user.id,
+      content: newComment
+    }).select('id, content, created_at, profiles(username)').single();
 
-    const commentsStr = localStorage.getItem("mock_comments") || "{}";
-    const allComments = JSON.parse(commentsStr);
-    allComments[id as string] = updated;
-    localStorage.setItem("mock_comments", JSON.stringify(allComments));
+    if (!error && insertData) {
+      const c = { 
+        id: insertData.id, 
+        author: insertData.profiles?.username || "我", 
+        text: insertData.content, 
+        time: "刚刚" 
+      };
+      setComments([c, ...comments]);
+      setNewComment("");
+    } else {
+      alert("发送失败: " + error?.message);
+    }
+    setSubmittingComment(false);
   };
 
   if (!data) {
@@ -236,7 +244,7 @@ export default function DetailPage() {
             placeholder="发句弹幕..." 
             className="flex-1 bg-white/60 dark:bg-black/40 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 shadow-sm"
           />
-          <button type="submit" disabled={!newComment.trim()} className="bg-indigo-500 disabled:opacity-50 text-white px-5 rounded-xl text-sm font-bold shadow-md shadow-indigo-500/20 active:scale-95 transition-all flex items-center justify-center">
+          <button type="submit" disabled={!newComment.trim() || submittingComment} className="bg-indigo-500 disabled:opacity-50 text-white px-5 rounded-xl text-sm font-bold shadow-md shadow-indigo-500/20 active:scale-95 transition-all flex items-center justify-center">
             <Send size={16} />
           </button>
         </form>

@@ -3,8 +3,9 @@
 import { motion } from "framer-motion";
 import { ArrowLeft, Send, Sparkles, Calendar, Gift } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/utils/supabase/client";
 
 export default function CreatePrediction() {
   const router = useRouter();
@@ -13,30 +14,50 @@ export default function CreatePrediction() {
   const [reward, setReward] = useState("");
   const [deadline, setDeadline] = useState("");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    async function checkAuth() {
+      const supabase = createClient();
+      const { data } = await supabase.auth.getUser();
+      if (!data.user) {
+        alert("发布契约需要先验证先知的身份！");
+        router.push("/login");
+      }
+    }
+    checkAuth();
+  }, [router]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!title || !reward || !deadline) return;
+
     setIsSubmitting(true);
     
-    // Mock submission latency and state saving
-    setTimeout(() => {
-      const newId = Date.now().toString();
-      const newPrediction = {
-        id: newId,
-        author: "我 (Me)",
-        title: title,
-        reward: reward,
-        votes: 0,
-        timeLeft: "刚发起",
-        accurateRate: "100%"
-      };
-      
-      const stored = localStorage.getItem("mock_predictions");
-      const arr = stored ? JSON.parse(stored) : [];
-      localStorage.setItem("mock_predictions", JSON.stringify([newPrediction, ...arr]));
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-      // Route to the new mocked prediction detail page
-      router.push(`/p/${newId}`);
-    }, 1200);
+    if (!user) {
+      alert("请先登录再发布预测！");
+      router.push('/login');
+      return;
+    }
+
+    const { data, error } = await supabase.from('predictions').insert({
+      author_id: user.id,
+      title: title,
+      reward: reward,
+      deadline: new Date(deadline).toISOString(),
+      status: 'active'
+    }).select().single();
+
+    if (error) {
+      console.error(error);
+      alert("发布失败: " + error.message);
+      setIsSubmitting(false);
+      return;
+    }
+
+    // Route to the new prediction detail page
+    router.push(`/p/${data.id}`);
   };
 
   return (
