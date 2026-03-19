@@ -37,7 +37,9 @@ export default async function RootLayout({
         <div className="absolute top-6 right-6 z-50">
           {user ? (
             <div className="flex items-center gap-2 text-xs font-bold text-slate-500 bg-white/50 dark:bg-black/20 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-800 backdrop-blur-md shadow-sm">
-              <span>{user.user_metadata?.user_name || user.email?.split('@')[0]} 👋</span>
+              <Link href="/profile" className="hover:text-indigo-500 transition-colors flex items-center gap-1">
+                <span>{user.user_metadata?.user_name || user.email?.split('@')[0]}</span> 👋
+              </Link>
               <div className="w-[1px] h-3 bg-slate-300 dark:bg-slate-700"></div>
               <form action={logout}>
                 <button type="submit" className="text-red-500 hover:text-red-600 transition-colors py-0.5">退出</button>

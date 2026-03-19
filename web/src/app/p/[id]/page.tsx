@@ -29,7 +29,7 @@ export default function DetailPage() {
       // Load Prediction Info
       const { data: pData } = await supabase
         .from('predictions')
-        .select(`id, title, deadline, reward, status, profiles (username, avatar_url)`)
+        .select(`id, title, deadline, reward, status, final_result, author_id, profiles (username, avatar_url)`)
         .eq('id', id)
         .single();
       
@@ -61,8 +61,11 @@ export default function DetailPage() {
 
          setData({
            id: pData.id,
-           author: pData.profiles?.username || "佚名",
+           author_id: pData.author_id,
+           author: (pData.profiles as any)?.username || "佚名",
            title: pData.title,
+           status: pData.status,
+           final_result: pData.final_result,
            timeLeft: daysLeft > 0 ? `${daysLeft}天后` : '已截止',
            votes: total
          });
@@ -78,7 +81,7 @@ export default function DetailPage() {
       if (cData) {
         setComments(cData.map(c => ({
           id: c.id,
-          author: c.profiles?.username || "游客",
+          author: (c.profiles as any)?.username || "游客",
           text: c.content,
           time: new Date(c.created_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
         })));
@@ -136,7 +139,7 @@ export default function DetailPage() {
     if (!error && insertData) {
       const c = { 
         id: insertData.id, 
-        author: insertData.profiles?.username || "我", 
+        author: (insertData.profiles as any)?.username || "我", 
         text: insertData.content, 
         time: "刚刚" 
       };
@@ -146,6 +149,23 @@ export default function DetailPage() {
       alert("发送失败: " + error?.message);
     }
     setSubmittingComment(false);
+  };
+
+  const resolveMatch = async (result: "positive" | "negative") => {
+    if (!confirm(`确定要结算并判定为【${result === 'positive' ? '挑战成功' : '失败打脸'}】吗？此操作不可逆！`)) return;
+    
+    // Call securely isolated Postgres RPC
+    const { error } = await supabase.rpc('resolve_prediction', { 
+      p_id: id, 
+      p_result: result 
+    });
+
+    if (error) {
+      alert("结算失败: " + error.message);
+    } else {
+      setData({...data, status: 'resolved', final_result: result});
+      alert(`结算成功！参与盖章的用户已自动发放欢乐豆奖励！`);
+    }
   };
 
   if (!data) {
@@ -186,25 +206,36 @@ export default function DetailPage() {
           {data.title}
         </h1>
 
-        {/* 投票进度条 Demo */}
-        <div className="mb-8">
-          <div className="flex justify-between text-xs font-bold mb-2 transition-all">
-            <span className="text-blue-500">能做到 ({posPct}%)</span>
-            <span className="text-pink-500">悬了 ({100 - posPct}%)</span>
+        {data.status === 'resolved' ? (
+          <div className={`mb-8 p-6 rounded-2xl border ${data.final_result === 'positive' ? 'bg-blue-500/10 border-blue-500/30' : 'bg-pink-500/10 border-pink-500/30'} flex flex-col items-center justify-center text-center shadow-inner`}>
+            <span className="text-4xl mb-3">{data.final_result === 'positive' ? '🎉' : '🤡'}</span>
+            <h2 className={`text-xl font-bold mb-1 ${data.final_result === 'positive' ? 'text-blue-500' : 'text-pink-500'}`}>
+              最终结果：{data.final_result === 'positive' ? '挑战成功！' : '惨遭打脸！'}
+            </h2>
+            <p className="text-xs text-slate-500">胜出的先知们已瓜分目标奖励积分</p>
           </div>
-          <div className="h-4 w-full bg-black/5 dark:bg-white/10 shadow-inner rounded-full overflow-hidden flex relative">
-            <motion.div initial={{width:0}} animate={{width:`${posPct}%`}} className="h-full bg-gradient-to-r from-cyan-500 to-blue-500" transition={{duration:0.6, ease: "easeOut"}}/>
-            <motion.div initial={{width:0}} animate={{width:`${100 - posPct}%`}} className="h-full bg-gradient-to-r from-pink-500 to-rose-500" transition={{duration:0.6, ease: "easeOut"}}/>
+        ) : (
+          <div className="mb-8">
+            <div className="flex justify-between text-xs font-bold mb-2 transition-all">
+              <span className="text-blue-500">能做到 ({posPct}%)</span>
+              <span className="text-pink-500">悬了 ({100 - posPct}%)</span>
+            </div>
+            <div className="h-4 w-full bg-black/5 dark:bg-white/10 shadow-inner rounded-full overflow-hidden flex relative">
+              <motion.div initial={{width:0}} animate={{width:`${posPct}%`}} className="h-full bg-gradient-to-r from-cyan-500 to-blue-500" transition={{duration:0.6, ease: "easeOut"}}/>
+              <motion.div initial={{width:0}} animate={{width:`${100 - posPct}%`}} className="h-full bg-gradient-to-r from-pink-500 to-rose-500" transition={{duration:0.6, ease: "easeOut"}}/>
+            </div>
+            <p className="text-center text-xs text-slate-400 mt-3 font-medium flex items-center justify-center gap-1">
+              <Users size={14}/> {data.votes} 人已入局
+            </p>
           </div>
-          <p className="text-center text-xs text-slate-400 mt-3 font-medium flex items-center justify-center gap-1">
-            <Users size={14}/> {data.votes} 人已入局
-          </p>
-        </div>
+        )}
 
-        {/* Action Buttons */}
-        <div className="pt-6 border-t border-slate-200/50 dark:border-slate-800/50 flex flex-col gap-3">
-          <motion.button 
-            whileTap={{scale: 0.98}}
+        {/* Action Buttons (Hidden if resolved) */}
+        {data.status === 'active' && (
+          <div className="pt-6 border-t border-slate-200/50 dark:border-slate-800/50 flex flex-col gap-3">
+            <motion.button 
+              whileTap={{scale: 0.98}}
+
             onClick={() => handleVote("positive")}
             className={`w-full p-4 rounded-2xl font-bold shadow-lg flex justify-between items-center group transition-colors ${
               voted === "positive" 
@@ -231,6 +262,24 @@ export default function DetailPage() {
           
           <p className="text-[11px] text-center text-slate-400 mt-1">再次点击可取消下注 ✨</p>
         </div>
+        )}
+
+        {/* Author Settlement Panel */}
+        {data.status === 'active' && user?.id === data.author_id && (
+          <div className="mt-8 bg-black/5 dark:bg-white/5 border border-slate-200 dark:border-slate-800 rounded-2xl p-5">
+            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-3 flex items-center gap-1.5 align-middle">
+              👑 发起人专属：提前开奖结算
+            </h3>
+            <div className="flex gap-3">
+              <button onClick={() => resolveMatch('positive')} className="flex-1 bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border border-blue-500/30 font-bold py-2 rounded-xl text-xs transition-colors">
+                结算：我成功做到了！
+              </button>
+              <button onClick={() => resolveMatch('negative')} className="flex-1 bg-pink-500/10 hover:bg-pink-500/20 text-pink-500 border border-pink-500/30 font-bold py-2 rounded-xl text-xs transition-colors">
+                结算：咳..我被打脸了
+              </button>
+            </div>
+          </div>
+        )}
       </motion.div>
 
       {/* Comments Section */}
