@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import UserNav from "@/components/UserNav";
 
-export const runtime = 'edge';
+export const dynamic = 'force-static';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
