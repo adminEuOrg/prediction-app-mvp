@@ -5,7 +5,7 @@ import { logout } from "@/app/login/actions";
 import Link from "next/link";
 import "./globals.css";
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
